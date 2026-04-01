@@ -1,4 +1,6 @@
 import json
+import zipfile
+import io
 from aiogram import Router, F, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -390,13 +392,11 @@ async def admin_upload_items_cb(callback: types.CallbackQuery, state: FSMContext
     await callback.message.edit_text(
         "📥 **Загрузка товаров**\n\n"
         "**Способы загрузки:**\n\n"
-        "1️⃣ **JSON файл** (cookies) - один файл = один аккаунт\n"
-        "   Пример: `account.json`\n\n"
-        "2️⃣ **TXT файл** - каждая строка = один товар\n"
-        "   Пример:\n"
-        "   `login1:password1`\n"
-        "   `login2:password2`\n\n"
-        "3️⃣ **Текстовое сообщение** - каждая строка = один товар",
+        "1️⃣ **ZIP архив** с JSON файлами (cookies)\n"
+        "   Несколько аккаунтов сразу\n\n"
+        "2️⃣ **JSON файл** (cookies) - один аккаунт\n\n"
+        "3️⃣ **TXT файл** - каждая строка = один товар\n\n"
+        "4️⃣ **Текстовое сообщение** - каждая строка = один товар",
         parse_mode="Markdown",
     )
 
@@ -409,22 +409,44 @@ async def admin_upload_items_file(message: types.Message, state: FSMContext):
     # Скачиваем файл
     file = await message.bot.get_file(message.document.file_id)
     file_content = await message.bot.download_file(file.file_path)
-    
-    try:
-        text = file_content.read().decode('utf-8')
-    except Exception:
-        await message.answer("❌ Не удалось прочитать файл. Убедитесь, что это текстовый файл.")
-        return
+    file_bytes = file_content.read()
     
     data = await state.get_data()
     product_id = data["upload_product_id"]
     
     file_name = message.document.file_name or ""
+    items = []
     
     # Проверяем тип файла
-    if file_name.lower().endswith('.json'):
+    if file_name.lower().endswith('.zip'):
+        # ZIP архив с JSON файлами
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as zip_file:
+                for name in zip_file.namelist():
+                    # Пропускаем папки и системные файлы
+                    if name.endswith('/') or name.startswith('__MACOSX') or name.startswith('.'):
+                        continue
+                    # Обрабатываем только JSON файлы
+                    if name.lower().endswith('.json'):
+                        try:
+                            content = zip_file.read(name).decode('utf-8')
+                            # Проверяем что это валидный JSON
+                            json.loads(content)
+                            items.append(content.strip())
+                        except (json.JSONDecodeError, UnicodeDecodeError):
+                            continue  # Пропускаем невалидные файлы
+        except zipfile.BadZipFile:
+            await message.answer("❌ Невалидный ZIP архив.")
+            return
+            
+        if not items:
+            await message.answer("❌ В архиве не найдено валидных JSON файлов.")
+            return
+            
+    elif file_name.lower().endswith('.json'):
         # JSON файл с cookies - один файл = один товар
         try:
+            text = file_bytes.decode('utf-8')
             # Проверяем что это валидный JSON
             json.loads(text)
             # Сохраняем весь JSON как один товар
@@ -432,9 +454,17 @@ async def admin_upload_items_file(message: types.Message, state: FSMContext):
         except json.JSONDecodeError:
             await message.answer("❌ Невалидный JSON файл. Проверьте формат.")
             return
+        except UnicodeDecodeError:
+            await message.answer("❌ Не удалось прочитать файл.")
+            return
     else:
         # TXT файл - каждая строка = товар
-        items = [line.strip() for line in text.strip().split('\n') if line.strip()]
+        try:
+            text = file_bytes.decode('utf-8')
+            items = [line.strip() for line in text.strip().split('\n') if line.strip()]
+        except UnicodeDecodeError:
+            await message.answer("❌ Не удалось прочитать файл.")
+            return
     
     if not items:
         await message.answer("❌ Файл пустой или не содержит товаров.")
