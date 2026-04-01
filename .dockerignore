@@ -1,0 +1,15 @@
+# Игнорируем
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.local
+*.db
+data/
+.DS_Store
+*.md
+.vscode
+.idea

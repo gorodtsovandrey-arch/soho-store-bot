@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    container_name: tg-shop-bot
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+      - ./bot_database.db:/app/bot_database.db
+    env_file:
+      - .env
+    environment:
+      - DATABASE_PATH=/app/bot_database.db
